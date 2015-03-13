@@ -66,7 +66,7 @@ def sync(current, dbfile):
     return current
 
 
-@StackCommand(r"push (?P<value>.*)")
+@StackCommand(r"(push)? (?P<value>.*)")
 def push(stack, **kwargs):    
     return [kwargs['value']] + stack
 
@@ -111,7 +111,7 @@ def cp(stack, **kwargs):
 
     return [stack[src]] + stack
 
-@StackCommand(r"rot ?(-n (?P<count>[0-9]+))?")
+@StackCommand(r"rot ?(-n (?P<count>[0-9-]+))?")
 def rot(stack, **kwargs):
     count = 1 if kwargs['count'] is None else int(kwargs['count'])
     
@@ -145,7 +145,7 @@ def apply(blob, **kwargs):
     blob['stack'][index] = newSubstack
     return blob
 
-@Command(r"snooze ?(--index (?P<index>[0-9]+))? (?P<multiplier>[0-9]+)(?P<period>[smhDWMQY])")
+@Command(r"snooze ?(--index (?P<index>[0-9]+))? (?P<multiplier>[0-9]+)(?P<period>[smhdwMqy])")
 def snooze(blob, **kwargs):
     index = 0 if kwargs['index'] is None else int(kwargs['index'])
 
@@ -153,11 +153,11 @@ def snooze(blob, **kwargs):
         's': timedelta(seconds=1),
         'm': timedelta(minutes=1),
         'h': timedelta(hours=1),
-        'D': timedelta(days=1),
-        'W': timedelta(weeks=1),
+        'd': timedelta(days=1),
+        'w': timedelta(weeks=1),
         'M': timedelta(weeks=4),
-        'Q': timedelta(weeks=12),
-        'Y': timedelta(weeks=52),
+        'q': timedelta(weeks=12),
+        'y': timedelta(weeks=52),
     }
 
     delay = periodDuration[kwargs['period']] * int(kwargs['multiplier'])
