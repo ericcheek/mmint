@@ -172,11 +172,29 @@ def snooze(blob, **kwargs):
     return blob
 
 
-def itemToString(item):
+def recursiveIter(item, level=0):
     if type(item) == list:
-        return "[%s]" % ("; ".join(map(itemToString, item)))
-    return str(item)
+        for x in item:
+            for y in recursiveIter(x, level+1):
+                yield y
+    else:
+        yield (item, level)
 
+def summaryPrint(item, limit=None):
+    spacing = "  "
+    if type(item) == list:
+        items = list(recursiveIter(item))
+
+        lineFmt = lambda (i, l): spacing*l + "- " + i
+
+        lines = map(lineFmt, items)
+        if limit!= None and len(items) > limit:
+            (_, l) = items[limit]
+            lines = lines[:limit] + [spacing*l + "... %s more" % (len(items) - limit)]
+
+        return "\n" + "\n".join(lines)
+    else :
+        return str(item)
 
 def main():
     dbfile = '.mmintdb'
@@ -187,7 +205,8 @@ def main():
         for fi in xrange(len(current['stack'])):
             i = len(current['stack']) - fi -1
             item = current['stack'][i]
-            print "%s: %s" % (i, itemToString(item))
+            limit = None if i == 0 else 3
+            print "%s: %s" % (i, summaryPrint(item, limit=limit))
         
         print '>',
         
