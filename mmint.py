@@ -33,6 +33,39 @@ def matchAndRun(line, blobData):
             return commandFunc(copy.deepcopy(blobData), **match.groupdict())
     return blobData
 
+_schemaTransforms = {}
+def SchemaTransform(version):
+    def _trans(func):
+        _schemaTransforms[version] = func
+
+        return func
+    return _trans
+
+def checkSchema(current):
+    while current['_schema_version'] in _schemaTransforms:
+        current = _schemaTransforms[current['_schema_version']](current)
+
+    return current
+
+@SchemaTransform(1)
+def schema1_2(current):
+    temp = {
+        '_schema_version': 2,
+        'stack': [],
+        'snoozed': [],
+        'items': {}
+    }
+
+    # recursive build up of ref structure
+    
+    def iterItems(item):
+        if type(item) == list:
+            
+
+
+    return temp
+        
+
 def sync(current, dbfile):
     if current is None:
         try:
@@ -46,24 +79,40 @@ def sync(current, dbfile):
                         'snoozed': []
                     }
                     # TODO make backup on schema transform
+                current = checkSchema(current)
                     
         except IOError:
             current = {
                 '_schema_version': '1',
                 'stack': [],
-                'snoozed': []
+                'snoozed': [],
+                'activepath': '/',
             }
     else:
         with open(dbfile, 'w') as f:
             f.write(json.dumps(current))
 
-    now = datetime.utcnow()
+    current = wakeup(current)
+    return current
 
+def wakeup(current):
+    # Perform wakeup procedures
+    now = datetime.utcnow()
+    
+    # TODO: call custom wakeup function
     nowActive = filter(lambda x: datetime.fromtimestamp(x['ttime']) <= now, current['snoozed'])
     current['snoozed'] = filter(lambda x: datetime.fromtimestamp(x['ttime']) > now, current['snoozed'])
     current['stack'].extend(map(lambda x: x['item'], nowActive))
             
     return current
+
+def _createItem(current, payload):
+    
+    return {
+        'id': ,
+        'path': current['activepath']
+        'v': payload,
+    }
 
 
 @StackCommand(r"(push)? (?P<value>.*)")
