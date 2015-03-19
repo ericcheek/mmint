@@ -5,13 +5,15 @@ import re
 import copy
 import time
 from datetime import timedelta, datetime
+import random
+import string
 
 _commandTable = []
 def StackCommand(regex):
     def _command(func):
-        def wrapper(blob, **kwargs):
-            blob['stack' ] = func(blob['stack'], **kwargs)
-            return blob
+        def wrapper(db, **kwargs):
+            db['stack' ] = func(db['stack'], **kwargs)
+            return db
 
         _commandTable.append((re.compile(regex), wrapper))
         return wrapper
@@ -26,12 +28,15 @@ def Command(regex):
     return _command
 
 
-def matchAndRun(line, blobData):
+def matchAndRun(line, dbData):
     for commandRegex, commandFunc in _commandTable:
         match = commandRegex.match(line)
         if match is not None:            
-            return commandFunc(copy.deepcopy(blobData), **match.groupdict())
-    return blobData
+            return commandFunc(copy.deepcopy(dbData), **match.groupdict())
+    return dbData
+
+def generateId():
+    return 'MM' + ''.join([random.choice(string.letters + string.digits) for i in xrange(16)])
 
 _schemaTransforms = {}
 def SchemaTransform(version):
@@ -41,27 +46,41 @@ def SchemaTransform(version):
         return func
     return _trans
 
-def checkSchema(current):
-    while current['_schema_version'] in _schemaTransforms:
-        current = _schemaTransforms[current['_schema_version']](current)
+def checkSchema(db, dbfile):
+    if type(db) is list:
+        db = {
+            '_schema_version': '1',
+            'stack': db,
+            'snoozed': []
+        }
 
-    return current
+    while db['_schema_version'] in _schemaTransforms:
+        # create backup before schema migration
+        sync(db, '%s.bak%s' % (dbfile, int(time.mktime((datetime.utcnow()).timetuple()))))
+        db = _schemaTransforms[db['_schema_version']](db)
+        sync(db, dbfile)
 
-@SchemaTransform(1)
+    return db
+
+@SchemaTransform('1')
 def schema1_2(current):
     temp = {
         '_schema_version': 2,
         'stack': [],
         'snoozed': [],
-        'items': {}
+        'items': {},
+        'activepath': '/'
     }
 
-    # recursive build up of ref structure
-    
-    def iterItems(item):
+    def update(item):
         if type(item) == list:
-            
+            item = [update(x) for x in item]
 
+        id = _createItem(temp, item, '/', 'chunk' if type(item) == list else 'atom')
+        return id 
+
+    temp['stack'] = [update(x) for x in current['stack']]
+    temp['snoozed'] = [{'r': update(x['item']), 't': x['ttime']} for x in current['snoozed']]
 
     return temp
         
@@ -72,15 +91,8 @@ def sync(current, dbfile):
             with open(dbfile) as f:
                 current = json.loads(f.read())
                 # schema transformations
-                if type(current) is list:
-                    current = {
-                        '_schema_version': '1',
-                        'stack': current,
-                        'snoozed': []
-                    }
-                    # TODO make backup on schema transform
-                current = checkSchema(current)
-                    
+                current = checkSchema(current, dbfile)
+
         except IOError:
             current = {
                 '_schema_version': '1',
@@ -92,7 +104,6 @@ def sync(current, dbfile):
         with open(dbfile, 'w') as f:
             f.write(json.dumps(current))
 
-    current = wakeup(current)
     return current
 
 def wakeup(current):
@@ -100,49 +111,55 @@ def wakeup(current):
     now = datetime.utcnow()
     
     # TODO: call custom wakeup function
-    nowActive = filter(lambda x: datetime.fromtimestamp(x['ttime']) <= now, current['snoozed'])
-    current['snoozed'] = filter(lambda x: datetime.fromtimestamp(x['ttime']) > now, current['snoozed'])
-    current['stack'].extend(map(lambda x: x['item'], nowActive))
+    nowActive = filter(lambda x: datetime.fromtimestamp(x['t']) <= now, current['snoozed'])
+    current['snoozed'] = filter(lambda x: datetime.fromtimestamp(x['t']) > now, current['snoozed'])
+    current['stack'].extend(map(lambda x: x['r'], nowActive))
             
     return current
 
-def _createItem(current, payload):
-    
-    return {
-        'id': ,
-        'path': current['activepath']
-        'v': payload,
+def _createItem(db, payload, path, _type):    
+    id = generateId()
+    db['items'][id] = {
+        '_type': _type,
+        'path': path,
+        'v': payload
     }
 
+    # TODO: with immutable stuctures, return id and new db
+    return id
 
-@StackCommand(r"(push)? (?P<value>.*)")
-def push(stack, **kwargs):    
-    return [kwargs['value']] + stack
+def _resolve(db, ref):
+    return db['items'][ref]
+
+
+@Command(r"(push)? (?P<value>.*)")
+def push(db, **kwargs):
+    id = _createItem(db, kwargs['value'], db['activepath'], 'atom')
+    db['stack'] = [id] + db['stack']
+    return db
 
 @StackCommand(r"pop")
 def pop(stack, **kwargs):    
     return stack[1:]
 
-@StackCommand(r"chunk (?P<count>[0-9]+)")
-def chunk(stack, **kwargs):
+@Command(r"chunk (?P<count>[0-9]+)")
+def chunk(db, **kwargs):
     count = int(kwargs['count'])
-    return [stack[:count]] + stack[count:]
+    id = _createItem(db, db['stack'][:count], db['activepath'], 'chunk')
 
-@StackCommand(r"expand")
-def expand(stack, **kwargs):
-    if type(stack[0]) is not list:
-        print "must operate on lists"
-        return stack
+    db['stack'] = [id] + db['stack'][count:]
 
-    return [stack[0]] + stack[0] + stack[1:]
+    return db
 
-@StackCommand(r"explode")
-def explode(stack, **kwargs):
-    if type(stack[0]) is not list:
-        print "must operate on lists"
-        return stack
+@Command(r"expand")
+def expand(db, **kwargs):
+    db['stack'] =  [db['stack'][0]] + _resolve(db, db['stack'][0])['v'] + db['stack'][1:]
+    return db
 
-    return stack[0] + stack[1:]
+@Command(r"explode")
+def explode(db, **kwargs):
+    db['stack'] =  _resolve(db, db['stack'][0])['v'] + db['stack'][1:]
+    return db
     
 
 @StackCommand(r"mv (?P<src>[0-9]+) (?P<dest>[0-9]+)")
@@ -167,7 +184,7 @@ def swap(stack, **kwargs):
     
     return stack
 
-@StackCommand(r"cp ?(?P<src>[0-9]+)")
+@StackCommand(r"cp ?(?P<src>[0-9]+)?")
 def cp(stack, **kwargs):
     src = 0 if kwargs['src'] is None else int(kwargs['src'])
 
@@ -185,30 +202,41 @@ def reverse(stack, **kwargs):
     
     return stack
 
-@StackCommand(r"edit ?(--index (?P<index>[0-9]+))? (?P<value>.*)")
-def edit(stack, **kwargs):
+@Command(r"edit ?(--index (?P<index>[0-9]+))? (?P<value>.*)")
+def edit(db, **kwargs):
     index = 0 if kwargs['index'] is None else int(kwargs['index'])
-    stack[index] = kwargs['value']
-    return stack
+
+    ref = db['stack'][index]
+    item = _resolve(db, ref)
+    
+    if item['_type'] != 'atom':
+        print "must target atoms"
+        return db
+    
+    db['items'][ref]['v'] = kwargs['value']    
+
+    return db
 
 @Command(r"apply (?P<index>[0-9]+) (?P<command>.*)")
-def apply(blob, **kwargs):
+def apply(db, **kwargs):
     index = int(kwargs['index'])
     command = kwargs['command']
 
-    stack = blob['stack']
+    originalStack = db['stack']
     
-    if type(stack[index]) is not list:
-        print "Must target lists"
-        return stack
-
-    # only used with stack commands
-    newSubstack = matchAndRun(command, {'stack': stack[index]})['stack']
-    blob['stack'][index] = newSubstack
-    return blob
+    # TODO: assert item 0 is chunk
+    db['stack'] = _resolve(db, originalStack[index])['v']
+    
+    db = matchAndRun(command, db)
+    
+    substackId = _createItem(db, db['stack'], db['activepath'], 'chunk')
+    originalStack[index] = substackId
+    db['stack'] = originalStack
+    
+    return db
 
 @Command(r"snooze ?(--index (?P<index>[0-9]+))? (?P<multiplier>[0-9]+)(?P<period>[smhdwMqy])")
-def snooze(blob, **kwargs):
+def snooze(db, **kwargs):
     index = 0 if kwargs['index'] is None else int(kwargs['index'])
 
     periodDuration = {
@@ -225,27 +253,30 @@ def snooze(blob, **kwargs):
     delay = periodDuration[kwargs['period']] * int(kwargs['multiplier'])
     ttime = time.mktime((datetime.utcnow() + delay).timetuple())
 
-    item = blob['stack'][index]
-
+    item = db['stack'][index]
     
-    del blob['stack'][index]
-    blob['snoozed'] = sorted(blob['snoozed'] + [{'item': item, 'ttime': ttime}], key=lambda x: x['ttime'])
+    del db['stack'][index]
+    db['snoozed'] = sorted(db['snoozed'] + [{'r': item, 't': ttime}], key=lambda x: x['t'])
     
-    return blob
+    return db
 
 
-def recursiveIter(item, level=0):
-    if type(item) == list:
-        for x in item:
-            for y in recursiveIter(x, level+1):
+def recursiveIter(db, ref, level=0):
+    item = db['items'][ref]
+    if item['_type'] == 'chunk':    
+        for x in item['v']:
+            for y in recursiveIter(db, x, level+1):
                 yield y
     else:
-        yield (item, level)
+        yield (item['v'], level)
 
-def summaryPrint(item, limit=None):
+def summaryPrint(db, ref, limit=None):
     spacing = "  "
-    if type(item) == list:
-        items = list(recursiveIter(item))
+
+    item = db['items'][ref]
+
+    if item['_type'] == 'chunk':
+        items = list(recursiveIter(db, ref))
 
         lineFmt = lambda (i, l): spacing*l + "- " + i
 
@@ -256,7 +287,7 @@ def summaryPrint(item, limit=None):
 
         return "\n" + "\n".join(lines)
     else :
-        return str(item)
+        return str(item['v'])
 
 def main():
     dbfile = '.mmintdb'
@@ -268,7 +299,7 @@ def main():
             i = len(current['stack']) - fi -1
             item = current['stack'][i]
             limit = None if i == 0 else 3
-            print "%s: %s" % (i, summaryPrint(item, limit=limit))
+            print "%s: %s" % (i, summaryPrint(current, item, limit=limit))
         
         print '>',
         
@@ -278,7 +309,8 @@ def main():
             exit(0)
             
         current = matchAndRun(line, current)
-        sync(current, dbfile)
+        current = sync(current, dbfile)
+        current = wakeup(current)
 
 
 
