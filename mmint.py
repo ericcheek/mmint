@@ -81,7 +81,20 @@ def chunk(stack, **kwargs):
 
 @StackCommand(r"expand")
 def expand(stack, **kwargs):
+    if type(stack[0]) is not list:
+        print "must operate on lists"
+        return stack
+
+    return [stack[0]] + stack[0] + stack[1:]
+
+@StackCommand(r"explode")
+def explode(stack, **kwargs):
+    if type(stack[0]) is not list:
+        print "must operate on lists"
+        return stack
+
     return stack[0] + stack[1:]
+    
 
 @StackCommand(r"mv (?P<src>[0-9]+) (?P<dest>[0-9]+)")
 def mv(stack, **kwargs):
