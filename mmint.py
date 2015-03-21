@@ -38,6 +38,11 @@ def matchAndRun(line, dbData):
 def generateId():
     return 'MM' + ''.join([random.choice(string.letters + string.digits) for i in xrange(16)])
 
+def generateTimestamp(datet=None):
+    if datet is None:
+        datet = datetime.utcnow()
+    return int(time.mktime(datet.timetuple()))
+
 _schemaTransforms = {}
 def SchemaTransform(version):
     def _trans(func):
@@ -56,7 +61,7 @@ def checkSchema(db, dbfile):
 
     while db['_schema_version'] in _schemaTransforms:
         # create backup before schema migration
-        sync(db, '%s.bak%s' % (dbfile, int(time.mktime((datetime.utcnow()).timetuple()))))
+        sync(db, '%s.bak%s' % (dbfile, generateTimestamp()))
         db = _schemaTransforms[db['_schema_version']](db)
         sync(db, dbfile)
 
@@ -114,7 +119,13 @@ def wakeup(current):
     nowActive = filter(lambda x: datetime.fromtimestamp(x['t']) <= now, current['snoozed'])
     current['snoozed'] = filter(lambda x: datetime.fromtimestamp(x['t']) > now, current['snoozed'])
     current['stack'].extend(map(lambda x: x['r'], nowActive))
-            
+
+    # Filter path filtered items
+    apath = current['activepath']
+    ignored = filter(lambda ref: not current['items'][ref]['path'].startswith(apath), current['stack'])
+    current['stack'] = filter(lambda ref: current['items'][ref]['path'].startswith(apath), current['stack'])
+    current['snoozed'] = [{'r': ref, 't': generateTimestamp()} for ref in ignored] + current['snoozed']
+
     return current
 
 def _createItem(db, payload, path, _type):    
@@ -162,16 +173,25 @@ def explode(db, **kwargs):
     return db
     
 
-@StackCommand(r"mv (?P<src>[0-9]+) (?P<dest>[0-9]+)")
-def mv(stack, **kwargs):
-    src = int(kwargs['src'])
-    dest = int(kwargs['dest'])
+@Command(r"mv ((?P<stackMv>(?P<src>[0-9]+) (?P<dest>[0-9]+))|(?P<pathMv>(?P<psrc>[0-9]+)? (?P<pdest>/.*)))")
+def mv(db, **kwargs):
+    if kwargs['stackMv'] is not None:
+        src = int(kwargs['src'])
+        dest = int(kwargs['dest'])
 
-    v = stack[src]
-    del stack[src]
-    stack.insert(dest, v)
+        v = db['stack'][src]
+        del db['stack'][src]
+        db['stack'].insert(dest, v)
+
+
+    if kwargs['pathMv'] is not None:
+        src = 0 if kwargs['psrc'] is None else int(kwargs['psrc'])
+        dest = kwargs['pdest']
+
+        db['items'][db['stack'][src]]['path'] = dest
+
     
-    return stack
+    return db
 
 @StackCommand(r"swap ?((?P<src>[0-9]+) (?P<dest>[0-9]+))?")
 def swap(stack, **kwargs):
@@ -251,13 +271,18 @@ def snooze(db, **kwargs):
     }
 
     delay = periodDuration[kwargs['period']] * int(kwargs['multiplier'])
-    ttime = time.mktime((datetime.utcnow() + delay).timetuple())
+    ttime = generateTimestamp(datetime.utcnow() + delay)
 
     item = db['stack'][index]
     
     del db['stack'][index]
     db['snoozed'] = sorted(db['snoozed'] + [{'r': item, 't': ttime}], key=lambda x: x['t'])
     
+    return db
+
+@Command(r"cd (?P<path>.*)")
+def cd(db, **kwargs):
+    db['activepath'] = kwargs['path']
     return db
 
 
@@ -297,9 +322,9 @@ def main():
 
         for fi in xrange(len(current['stack'])):
             i = len(current['stack']) - fi -1
-            item = current['stack'][i]
+            ref = current['stack'][i]
             limit = None if i == 0 else 3
-            print "%s: %s" % (i, summaryPrint(current, item, limit=limit))
+            print "%s: %s" % (i, summaryPrint(current, ref, limit=limit))
         
         print '>',
         
