@@ -1,12 +1,14 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 
-import json
-import re
-import copy
-import time
+from blessed import Terminal
 from datetime import timedelta, datetime
+import copy
+import json
+import posixpath
 import random
+import re
 import string
+import time
 
 _commandTable = []
 def StackCommand(regex):
@@ -42,6 +44,16 @@ def generateTimestamp(datet=None):
     if datet is None:
         datet = datetime.utcnow()
     return int(time.mktime(datet.timetuple()))
+
+
+def pathResolve(base, path):
+    if not path.startswith('/'):
+        path = posixpath.abspath(posixpath.join(base, path))
+
+    return path
+
+def pathSuffix(base, fullpath):
+    return fullpath[len(posixpath.commonprefix([base, fullpath])):]
 
 _schemaTransforms = {}
 def SchemaTransform(version):
@@ -173,7 +185,7 @@ def explode(db, **kwargs):
     return db
     
 
-@Command(r"mv ((?P<stackMv>(?P<src>[0-9]+) (?P<dest>[0-9]+))|(?P<pathMv>(?P<psrc>[0-9]+)? (?P<pdest>/.*)))")
+@Command(r"mv ((?P<stackMv>(?P<src>[0-9]+) (?P<dest>[0-9]+))|(?P<pathMv>(?P<psrc>[0-9]+)? ?(?P<pdest>.*)))")
 def mv(db, **kwargs):
     if kwargs['stackMv'] is not None:
         src = int(kwargs['src'])
@@ -186,7 +198,7 @@ def mv(db, **kwargs):
 
     if kwargs['pathMv'] is not None:
         src = 0 if kwargs['psrc'] is None else int(kwargs['psrc'])
-        dest = kwargs['pdest']
+        dest = pathResolve(db['activepath'], kwargs['pdest'])
 
         db['items'][db['stack'][src]]['path'] = dest
 
@@ -282,7 +294,9 @@ def snooze(db, **kwargs):
 
 @Command(r"cd (?P<path>.*)")
 def cd(db, **kwargs):
-    db['activepath'] = kwargs['path']
+    p = kwargs['path']
+
+    db['activepath'] = pathResolve(db['activepath'], p)
     return db
 
 
@@ -317,25 +331,34 @@ def summaryPrint(db, ref, limit=None):
 def main():
     dbfile = '.mmintdb'
     current = sync(None, dbfile)
+    current = wakeup(current)
 
-    while True:
+    term = Terminal()
+    with term.fullscreen():
 
-        for fi in xrange(len(current['stack'])):
-            i = len(current['stack']) - fi -1
-            ref = current['stack'][i]
-            limit = None if i == 0 else 3
-            print "%s: %s" % (i, summaryPrint(current, ref, limit=limit))
-        
-        print '>',
-        
-        try:
-            line = raw_input()
-        except (KeyboardInterrupt, EOFError):
-            exit(0)
+        while True:
+            print term.clear()
             
-        current = matchAndRun(line, current)
-        current = sync(current, dbfile)
-        current = wakeup(current)
+            for fi in xrange(len(current['stack'])):
+                i = len(current['stack']) - fi -1
+                ref = current['stack'][i]
+                limit = None if i == 0 else 3
+                item = _resolve(current, ref)
+
+                suffix = "./"+pathSuffix(current['activepath'], item['path'])
+
+                print term.red(str(i)) + " " + term.yellow(suffix) + term.red(': ') + term.white(summaryPrint(current, ref, limit=limit)) 
+
+            print term.green('%s>' % current['activepath']),
+
+            try:
+                line = raw_input()
+            except (KeyboardInterrupt, EOFError):
+                break
+
+            current = matchAndRun(line, current)
+            current = sync(current, dbfile)
+            current = wakeup(current)
 
 
 
