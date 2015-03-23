@@ -111,12 +111,7 @@ def sync(current, dbfile):
                 current = checkSchema(current, dbfile)
 
         except IOError:
-            current = {
-                '_schema_version': '1',
-                'stack': [],
-                'snoozed': [],
-                'activepath': '/',
-            }
+            current = checkSchema([], dbfile)
     else:
         with open(dbfile, 'w') as f:
             f.write(json.dumps(current))
