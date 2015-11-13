@@ -333,10 +333,11 @@ def main():
 
         while True:
             print term.clear()
-            
-            for fi in xrange(len(current['stack'])):
-                i = len(current['stack']) - fi -1
-                ref = current['stack'][i]
+
+            stackBottom = current['stack'][:40]
+            for fi in xrange(len(stackBottom)):
+                i = len(stackBottom) - fi -1
+                ref = stackBottom[i]
                 limit = None if i == 0 else 3
                 item = _resolve(current, ref)
 
