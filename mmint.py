@@ -321,7 +321,7 @@ def summaryPrint(db, ref, limit=None):
 
         return "\n" + "\n".join(lines)
     else :
-        return str(item['v'])
+        return unicode(item['v'])
 
 def main():
     dbfile = '.mmintdb'
@@ -343,7 +343,7 @@ def main():
 
                 suffix = "./"+pathSuffix(current['activepath'], item['path'])
 
-                print term.red(str(i)) + " " + term.yellow(suffix) + term.red(': ') + term.white(summaryPrint(current, ref, limit=limit)) 
+                print term.red(unicode(i)) + " " + term.yellow(suffix) + term.red(': ') + term.white(summaryPrint(current, ref, limit=limit)) 
 
             print term.green('%s>' % current['activepath']),
 
