@@ -118,13 +118,14 @@ def sync(current, dbfile):
 
     return current
 
-def wakeup(current):
+def wakeup(current, as_of=None):
     # Perform wakeup procedures
-    now = datetime.utcnow()
+    if as_of == None:
+        as_of = datetime.utcnow()
     
     # TODO: call custom wakeup function
-    nowActive = filter(lambda x: datetime.fromtimestamp(x['t']) <= now, current['snoozed'])
-    current['snoozed'] = filter(lambda x: datetime.fromtimestamp(x['t']) > now, current['snoozed'])
+    nowActive = filter(lambda x: datetime.fromtimestamp(x['t']) <= as_of, current['snoozed'])
+    current['snoozed'] = filter(lambda x: datetime.fromtimestamp(x['t']) > as_of, current['snoozed'])
     current['stack'].extend(map(lambda x: x['r'], nowActive))
 
     # Filter path filtered items
